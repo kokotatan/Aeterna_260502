@@ -4,6 +4,7 @@
   "description": "OpenClaw Hackathon on 260502. My first Hackathon.",
   "main": "index.js",
   "scripts": {
+    "setup": "node scripts/setup-testnet.js",
     "start": "node agent/index.js",
     "openclaw": "node agent/openclaw.js",
     "test:xrpl": "node xrpl/send.js",

@@ -28,19 +28,23 @@ XRPL_NETWORK=wss://s.altnet.rippletest.net:51233
 PORT=3001
 ```
 
-### 3. 人格データの確認・編集（任意）
+### 3. テストネット初期化（初回のみ・必須）
 
-`data/persona.json` でKotaroの人格設定を確認できます。
-- `values`: 価値観
-- `trigger_keywords`: 送金トリガーとなるキーワード
-- `recipients`: 送金先とその割合
+```bash
+npm run setup
+```
+
+これにより：
+- 送金用ウォレットを自動生成（faucetから1000 XRP付与）
+- 受取人用ウォレットを2つ生成（実在するtestnetアドレス）
+- `data/persona.json` の受取人アドレスを自動更新
 
 ---
 
 ## デモ実行
 
 ```bash
-node agent/index.js
+npm start
 ```
 
 ### 実行の流れ

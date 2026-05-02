@@ -36,7 +36,7 @@ function updatePersonaLastTriggered() {
 async function runAgentCycle() {
   if (isRunning) {
     console.log('[AGENT] Cycle skipped (previous still running)');
-    return;
+    return lastResult;
   }
 
   isRunning = true;
@@ -133,6 +133,7 @@ async function runAgentCycle() {
     isRunning = false;
     agentStatus = 'idle';
     console.log(`[AGENT] Cycle complete.`);
+    return logEntry;
   }
 }
 
@@ -167,9 +168,12 @@ app.get('/api/logs', (req, res) => {
 
 app.post('/api/trigger', async (req, res) => {
   console.log('[API] Manual trigger requested');
-  // 非同期で実行、即座にレスポンス
-  runAgentCycle().catch(console.error);
-  res.json({ message: 'Agent cycle triggered', status: 'running' });
+  try {
+    const result = await runAgentCycle();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/status', (req, res) => {
