@@ -3,7 +3,7 @@ const cryptoActions = require('../cryptoActions');
 const transferUSDCTool = {
     name: "transfer_usdc",
     description: "Transfer USDC to a specified blockchain address. Used when the user wants to send money or distribute inheritance.",
-    parameters: {
+    input_schema: {
         type: "object",
         properties: {
             toAddress: {
@@ -30,7 +30,7 @@ const transferUSDCTool = {
 const swapETHToUSDCTool = {
     name: "swap_eth_to_usdc",
     description: "Swaps native ETH for USDC using Uniswap V3. Used when the user wants to convert or exchange assets to stablecoins.",
-    parameters: {
+    input_schema: {
         type: "object",
         properties: {
             amountEth: {
