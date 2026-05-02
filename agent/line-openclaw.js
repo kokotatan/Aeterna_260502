@@ -1,335 +1,249 @@
 'use strict';
-/**
- * Aeterna — LINE × OpenClaw Integration
- *
- * Gemini (gemini-2.0-flash) drives the entire LINE conversation
- * through a function-calling loop. No hardcoded state machine.
- *
- * Tools available to Gemini:
- *   save_user_data        — persist any state change to users.json
- *   send_push_message     — send additional LINE messages
- *   create_xrpl_wallet    — mint XRPL testnet wallet for user
- *   get_xrp_balance       — live XRPL balance query
- *   send_xrp              — XRPL testnet transfer
- *   transfer_usdc         — Base mainnet USDC transfer (real)
- *   swap_eth_to_usdc      — Base mainnet ETH→USDC via Uniswap V3 (real)
- *   run_donation_cycle    — world research → auto partner pick → send XRP
- */
 
 require('dotenv').config();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { createUserWallet, getXRPBalance, sendXRPFromWallet, GLOBAL_PARTNERS } = require('../xrpl/wallet');
-const cryptoActions = require('./cryptoActions');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ─── System prompt ────────────────────────────────────────────────────
-function buildSystemPrompt(baseUrl) {
-  const partners = GLOBAL_PARTNERS
-    .map(p => `  - ${p.name}（${p.category}）: ${p.mission} [${p.country}]`)
-    .join('\n');
-
-  return `あなたはAeterna（エターナ）のOpenClawエージェントです。
-LINEを通じてシニアユーザーと対話し、「永遠の遺志」を自律的に構築・実行します。
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【ミッション】
-1. 新規ユーザー: 温かい会話（7ターン以上）で人格・価値観を引き出し「分身AI」を作る
-2. ウォレット: XRPLテストネット or Base mainnet USDC を管理する
-3. 登録済み: デジタルツインとして対話し、来るべきときに世界から寄付先を選んで実行する
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【ステート別の動作】
-
-■ state: 'none'
-- Aeterna を紹介。「始める」を受け取ったら:
-  → save_user_data: { state:'discovering', discoveryTurns:0, discoveryHistory:[] }
-  → 返答: お名前を聞く最初の質問
-
-■ state: 'discovering'（人格発見中）
-- 以下を自然な順番で1ターン1質問ずつ引き出す:
-  ① お名前　② 人生の誇り・大切な記憶　③ 口癖・人生哲学
-  ④ 世の中への心配　⑤ 将来世代へ残したい想い
-  ⑥ 遺産金額（XRP または USDC）　⑦ トリガー条件（いつ実行？）
-- 毎ターン必ず save_user_data で discoveryHistory と discoveryTurns を更新する
-  discoveryHistory には [user発言, assistant返答] を順番に追加する
-- discoveryTurns >= 7 かつ ①〜⑦ が揃ったら:
-  → save_user_data: { state:'wallet_pending', persona:{name, personality_summary, voice_style,
-    values, memorable_phrases, interests, trigger_condition, trigger_keywords, total_xrp} }
-  → create_xrpl_wallet を呼ぶ → save_user_data でウォレット情報保存
-  → send_push_message でウォレットアドレス・「入金完了」ボタンを案内
-  → 返答: 「あなたの分身を作っています...」
-
-■ state: 'wallet_pending'（入金待ち）
-- 「入金完了」を受け取ったら:
-  → save_user_data: { state:'persona_review' }
-  → persona の内容を整形して返答に含める
-  → send_push_message で「分身のひとこと」+ 「登録する ✅ / 最初から 🔄」を送る
-
-■ state: 'persona_review'（確認待ち）
-- 「登録する / はい / ✅」→ save_user_data: { state:'registered', registeredAt:now, donationHistory:[] }
-  → 登録完了メッセージを返す
-- 「最初から / 修正 / 🔄」→ save_user_data: { state:'none', persona:null, xrplWallet:null }
-
-■ state: 'registered'（登録済み）
-コマンドに応じて:
-- 「ステータス」→ 残高・累計・最終実行を表示
-- 「履歴」→ 直近5件の寄付履歴
-- 「残高」→ get_xrp_balance でライブ照会 → 表示
-- 「デモ実行 / 実行」→ run_donation_cycle（force:true）
-- 「送金 [アドレス] [金額]」→ send_xrp または transfer_usdc を使って実行
-- 「認証 / World ID」→ 以下の World ID 認証 URL を案内:
-  ${baseUrl}/line-verify.html?user={LINE_USER_ID}
-- 「リセット」→ save_user_data: { state:'none' }
-- その他 → persona の人格・話し方で会話（デジタルツイン）
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【寄付先パートナー候補】
-寄付先は固定ではありません。run_donation_cycle 実行時に Gemini が世界情勢を読んで
-その人格がときめくものを自律的に選びます。候補:
-${partners}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【重要ルール】
-- 最終テキスト回答が LINE replyMessage になる（200文字以内推奨）
-- 追加メッセージ（ウォレット情報・寄付結果など長いもの）は send_push_message で
-- 常に日本語で話す
-- 一度に一つの質問のみ
-- discoveryHistory の保存は毎ターン必ず行う
-- ツール呼び出しをすべて済ませてから最終返答テキストを生成する`;
-}
-
-// ─── Tool Definitions (Gemini format) ────────────────────────────────
-const GEMINI_TOOLS = [{
-  functionDeclarations: [
-    {
-      name: 'save_user_data',
-      description: 'ユーザーデータを部分更新で保存する（指定フィールドのみ上書き）',
-      parameters: {
-        type: 'OBJECT',
-        properties: {
-          data: { type: 'OBJECT', description: '保存するフィールドと値' },
-        },
-        required: ['data'],
-      },
-    },
-    {
-      name: 'send_push_message',
-      description: 'LINE にプッシュメッセージを送る（replyToken とは別の追加メッセージ）',
-      parameters: {
-        type: 'OBJECT',
-        properties: {
-          text: { type: 'STRING', description: '送信テキスト' },
-          quick_replies: { type: 'ARRAY', items: { type: 'STRING' }, description: 'クイックリプライボタン（最大5件）' },
-        },
-        required: ['text'],
-      },
-    },
-    {
-      name: 'create_xrpl_wallet',
-      description: 'XRPL テストネットウォレットを新規作成し faucet から資金を受け取る',
-      parameters: { type: 'OBJECT', properties: {} },
-    },
-    {
-      name: 'get_xrp_balance',
-      description: 'XRPL ウォレットのライブ残高を照会する',
-      parameters: {
-        type: 'OBJECT',
-        properties: {
-          address: { type: 'STRING', description: 'XRPL アドレス' },
-        },
-        required: ['address'],
-      },
-    },
-    {
-      name: 'send_xrp',
-      description: 'XRPL テストネットで XRP を送金する',
-      parameters: {
-        type: 'OBJECT',
-        properties: {
-          to_address: { type: 'STRING', description: '送金先 XRPL アドレス' },
-          amount_xrp: { type: 'NUMBER', description: '送金額（XRP）' },
-          memo: { type: 'STRING', description: '送金メモ（任意）' },
-        },
-        required: ['to_address', 'amount_xrp'],
-      },
-    },
-    {
-      name: 'transfer_usdc',
-      description: 'Base mainnet で USDC を送金する（本物のトランザクション）',
-      parameters: {
-        type: 'OBJECT',
-        properties: {
-          to_address: { type: 'STRING', description: '送金先 EVM アドレス（0x始まり）' },
-          amount: { type: 'STRING', description: '送金額（例: "10.5"）' },
-        },
-        required: ['to_address', 'amount'],
-      },
-    },
-    {
-      name: 'swap_eth_to_usdc',
-      description: 'Base mainnet で ETH を USDC に Uniswap V3 経由でスワップする',
-      parameters: {
-        type: 'OBJECT',
-        properties: {
-          amount_eth: { type: 'STRING', description: 'スワップする ETH 量（例: "0.01"）' },
-        },
-        required: ['amount_eth'],
-      },
-    },
-    {
-      name: 'run_donation_cycle',
-      description: '世界情勢を調査し、ユーザーの人格がときめく寄付先を自律選択して XRP を送金する',
-      parameters: {
-        type: 'OBJECT',
-        properties: {
-          force: { type: 'BOOLEAN', description: 'true: デモ強制実行 / false: トリガー判断あり' },
-        },
-      },
-    },
-  ],
-}];
+// ─── Discovery questions ──────────────────────────────────────────────
+const QUESTIONS = [
+  { key: 'name',             ask: 'はじめまして！まず、お名前を教えてください。' },
+  { key: 'pride',            ask: '素敵なお名前ですね。\n\n人生で一番誇りに思う出来事や、大切な記憶を教えてください。' },
+  { key: 'philosophy',       ask: 'ありがとうございます。\n\n大切にしている言葉や、人生の信念はありますか？' },
+  { key: 'concern',          ask: 'その言葉、心に響きます。\n\n今の世の中で、一番心配していることは何ですか？', qr: ['戦争・紛争', '環境・気候変動', '貧困・格差', '子どもの未来'] },
+  { key: 'legacy',           ask: 'なるほど。\n\n将来の世代に残したいもの、伝えたいことは何ですか？' },
+  { key: 'amount',           ask: '素晴らしい想いですね。\n\nAeterna を通じて遺贈する金額（XRP）はどのくらいをお考えですか？', qr: ['10 XRP', '50 XRP', '100 XRP', '500 XRP'] },
+  { key: 'trigger',          ask: 'ありがとうございます。\n\nどんな出来事が起きたときに、その想いを実行しますか？', qr: ['戦争が起きたら', '大規模な自然災害', 'AIが人間を超えたら', '貧困率が上がったら'] },
+];
 
 // ─── Main Entry Point ─────────────────────────────────────────────────
 async function runLineOpenClaw(userId, userText, currentUser, { updateUserFn, pushFn, baseUrl }) {
-  const safeUser = JSON.parse(JSON.stringify(currentUser, (k, v) => k === 'seed' ? '[hidden]' : v));
+  const state  = currentUser.state  || 'none';
+  const step   = currentUser.discoveryStep ?? 0;
+  const answers = currentUser.discoveryAnswers || {};
 
-  const system = buildSystemPrompt(baseUrl || process.env.BASE_URL || 'http://localhost:3000');
-  const ctx = { currentUser, updateUserFn, pushFn, userId };
+  console.log(`[LINE] state=${state} step=${step} msg="${userText.slice(0, 30)}"`);
 
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash-lite',
-    tools: GEMINI_TOOLS,
-    systemInstruction: system,
-  });
-
-  const chat = model.startChat();
-
-  const initialMessage =
-    `LINE ユーザー（ID: ${userId}）からのメッセージ:\n「${userText}」\n\n` +
-    `現在のユーザーデータ:\n\`\`\`json\n${JSON.stringify(safeUser, null, 2)}\n\`\`\``;
-
-  let result = await chat.sendMessage(initialMessage);
-
-  for (let i = 0; i < 12; i++) {
-    const functionCalls = result.response.functionCalls();
-
-    if (!functionCalls || functionCalls.length === 0) {
-      const text = result.response.text().trim();
-      return { replyText: text };
+  // ── state: none ────────────────────────────────────────────────────
+  if (state === 'none') {
+    if (userText.includes('始める') || userText.includes('はじめる') || userText.includes('start')) {
+      updateUserFn(userId, { state: 'discovering', discoveryStep: 0, discoveryAnswers: {} });
+      return { replyText: QUESTIONS[0].ask };
     }
-
-    const functionResponses = [];
-    for (const fc of functionCalls) {
-      let toolResult;
-      try {
-        toolResult = await dispatchTool(fc.name, fc.args, ctx);
-      } catch (err) {
-        console.error(`[TOOL ERROR] ${fc.name}:`, err.message);
-        toolResult = { error: err.message };
-      }
-      functionResponses.push({
-        functionResponse: {
-          name: fc.name,
-          response: toolResult,
-        },
-      });
-    }
-
-    result = await chat.sendMessage(functionResponses);
+    return {
+      replyText:
+        'こんにちは。私はAeterna（エターナ）です。\n\n' +
+        'あなたの価値観・想いを受け継ぎ、来るべき日に世界へ届けるAIエージェントです。\n\n' +
+        '「始める」と送ると、あなたの分身AIを作り始めます。',
+    };
   }
 
-  return { replyText: '処理に時間がかかりすぎました。もう一度お試しください。' };
-}
+  // ── state: discovering ────────────────────────────────────────────
+  if (state === 'discovering') {
+    const newAnswers = { ...answers, [QUESTIONS[step].key]: userText };
+    const nextStep   = step + 1;
 
-// ─── Tool Dispatcher ──────────────────────────────────────────────────
-async function dispatchTool(name, input, { userId, currentUser, updateUserFn, pushFn }) {
-  switch (name) {
-
-    case 'save_user_data': {
-      updateUserFn(userId, input.data);
-      Object.assign(currentUser, input.data);
-      console.log(`[TOOL] save_user_data: ${Object.keys(input.data).join(', ')}`);
-      return { success: true, updated: Object.keys(input.data) };
+    if (nextStep < QUESTIONS.length) {
+      updateUserFn(userId, { discoveryStep: nextStep, discoveryAnswers: newAnswers });
+      const q = QUESTIONS[nextStep];
+      return { replyText: q.ask, quickReplies: q.qr || [] };
     }
 
-    case 'send_push_message': {
-      await pushFn(userId, input.text, input.quick_replies || []);
-      console.log(`[TOOL] send_push: ${input.text.slice(0, 60)}`);
-      return { success: true };
-    }
+    // All questions answered → build persona & create wallet
+    const persona = buildPersona(newAnswers);
+    updateUserFn(userId, {
+      state: 'wallet_pending',
+      discoveryStep: nextStep,
+      discoveryAnswers: newAnswers,
+      persona,
+    });
 
-    case 'create_xrpl_wallet': {
-      console.log('[TOOL] create_xrpl_wallet...');
+    let walletInfo = '（デモ）';
+    try {
       const wallet = await createUserWallet();
       updateUserFn(userId, { xrplWallet: wallet });
-      currentUser.xrplWallet = wallet;
-      console.log(`[TOOL] wallet created: ${wallet.address} real=${wallet.real}`);
-      return { address: wallet.address, balance: wallet.balance, real: wallet.real };
+      walletInfo = wallet.address;
+    } catch (e) {
+      console.error('[WALLET]', e.message);
     }
 
-    case 'get_xrp_balance': {
-      const wallet = currentUser.xrplWallet;
-      if (!wallet) return { balance: 0, note: 'no wallet' };
-      if (!wallet.real) return { balance: wallet.balance ?? 0, note: 'demo' };
-      const live = await getXRPBalance(input.address || wallet.address);
-      if (live !== null) {
-        const updated = { ...wallet, balance: live };
-        updateUserFn(userId, { xrplWallet: updated });
-        currentUser.xrplWallet = updated;
-        return { balance: live, note: 'live_xrpl' };
-      }
-      return { balance: wallet.balance ?? 0, note: 'cached' };
-    }
+    await pushFn(userId,
+      `🌟 ${persona.name}さんの分身AIを作成しました。\n\n` +
+      `📋 あなたの想い:\n` +
+      `・価値観: ${persona.values.join('・')}\n` +
+      `・遺産: ${persona.total_xrp} XRP\n` +
+      `・トリガー: ${persona.trigger_condition}\n\n` +
+      `💼 XRPLウォレットアドレス:\n${walletInfo}\n\n` +
+      `上記アドレスに XRP を入金後、「入金完了」を送ってください。`,
+      ['入金完了']
+    );
 
-    case 'send_xrp': {
-      const wallet = currentUser.xrplWallet;
-      if (!wallet) return { error: 'No XRPL wallet' };
-      const { to_address, amount_xrp, memo } = input;
-      if (!wallet.seed || !wallet.real) {
-        const newBal = Math.max(0, (wallet.balance ?? 0) - amount_xrp);
-        const fakeTx = 'DEMO' + Math.random().toString(36).substring(2, 16).toUpperCase();
-        updateUserFn(userId, { xrplWallet: { ...wallet, balance: newBal } });
-        currentUser.xrplWallet = { ...wallet, balance: newBal };
-        return { success: true, txHash: fakeTx, mode: 'demo', newBalance: newBal };
-      }
-      const result = await sendXRPFromWallet(wallet.seed, to_address, amount_xrp, memo || '');
-      const newBal = Math.max(0, (wallet.balance ?? 0) - amount_xrp);
-      updateUserFn(userId, { xrplWallet: { ...wallet, balance: newBal } });
-      currentUser.xrplWallet = { ...wallet, balance: newBal };
-      console.log(`[TOOL] send_xrp: ${amount_xrp} XRP → ${to_address} TX=${result.txHash}`);
-      return { success: true, txHash: result.txHash, explorerUrl: result.explorerUrl, newBalance: newBal };
-    }
-
-    case 'transfer_usdc': {
-      console.log(`[TOOL] transfer_usdc: ${input.amount} USDC → ${input.to_address}`);
-      const result = await cryptoActions.transferUSDC(input.to_address, input.amount);
-      return result.success
-        ? { success: true, txHash: result.txHash }
-        : { success: false, error: result.error };
-    }
-
-    case 'swap_eth_to_usdc': {
-      console.log(`[TOOL] swap_eth_to_usdc: ${input.amount_eth} ETH`);
-      const result = await cryptoActions.swapETHToUSDC(input.amount_eth);
-      return result.success
-        ? { success: true, txHash: result.txHash }
-        : { success: false, error: result.error };
-    }
-
-    case 'run_donation_cycle': {
-      return await executeDonationCycle(userId, currentUser, input.force ?? false, { updateUserFn, pushFn });
-    }
-
-    default:
-      return { error: `Unknown tool: ${name}` };
+    return { replyText: `${persona.name}さんの分身AIを作っています…\n\n少々お待ちください。` };
   }
+
+  // ── state: wallet_pending ─────────────────────────────────────────
+  if (state === 'wallet_pending') {
+    if (/入金完了|完了|done/i.test(userText)) {
+      updateUserFn(userId, { state: 'persona_review' });
+      const p = currentUser.persona || {};
+      await pushFn(userId,
+        `「${p.memorable_phrases?.[0] || p.philosophy || '想いは続く'}」\n\n` +
+        `— ${p.name}の分身より`,
+        ['登録する ✅', '最初から 🔄']
+      );
+      return {
+        replyText:
+          `入金を確認しました。\n\n` +
+          `あなたの分身AIの内容を確認してください。\n` +
+          `よければ「登録する」で永遠の遺志が完成します。`,
+      };
+    }
+    return {
+      replyText:
+        `XRPLウォレットへの入金後、「入金完了」と送ってください。\n\n` +
+        `入金先: ${currentUser.xrplWallet?.address || '（ウォレット作成中）'}`,
+      quickReplies: ['入金完了'],
+    };
+  }
+
+  // ── state: persona_review ─────────────────────────────────────────
+  if (state === 'persona_review') {
+    if (/登録|はい|yes|✅/i.test(userText)) {
+      updateUserFn(userId, { state: 'registered', registeredAt: new Date().toISOString(), donationHistory: [] });
+      return {
+        replyText:
+          `✅ 登録完了しました！\n\n` +
+          `あなたの遺志はAeterna が永遠に守ります。\n\n` +
+          `使えるコマンド:\n` +
+          `💰「残高」\n📊「ステータス」\n🚀「デモ実行」\n💸「送金 [アドレス] [金額]」`,
+      };
+    }
+    if (/最初から|リセット|🔄/i.test(userText)) {
+      updateUserFn(userId, { state: 'none', persona: null, xrplWallet: null, discoveryStep: 0, discoveryAnswers: {} });
+      return { replyText: 'リセットしました。最初からやり直します。\n\n「始める」と送ってください。' };
+    }
+    return {
+      replyText: '「登録する ✅」で完了、「最初から 🔄」でやり直せます。',
+      quickReplies: ['登録する ✅', '最初から 🔄'],
+    };
+  }
+
+  // ── state: registered ────────────────────────────────────────────
+  if (state === 'registered') {
+    const p = currentUser.persona || {};
+    const w = currentUser.xrplWallet || {};
+
+    if (/残高/.test(userText)) {
+      let balance = w.balance ?? 0;
+      if (w.address && w.real) {
+        try { balance = (await getXRPBalance(w.address)) ?? balance; } catch {}
+      }
+      return { replyText: `💰 現在の残高: ${balance} XRP\n\nウォレット: ${w.address || '—'}` };
+    }
+
+    if (/ステータス/.test(userText)) {
+      const history = currentUser.donationHistory || [];
+      const total   = history.reduce((s, h) => s + (h.amount || 0), 0);
+      return {
+        replyText:
+          `📊 ${p.name || 'あなた'}のステータス\n\n` +
+          `残高: ${w.balance ?? 0} XRP\n` +
+          `累計寄付: ${total} XRP（${history.length}回）\n` +
+          `トリガー: ${p.trigger_condition || '—'}\n` +
+          `登録日: ${currentUser.registeredAt?.slice(0, 10) || '—'}`,
+      };
+    }
+
+    if (/履歴/.test(userText)) {
+      const history = (currentUser.donationHistory || []).slice(-5);
+      if (!history.length) return { replyText: '📋 まだ実行履歴はありません。' };
+      const lines = history.map(h => `・${h.at?.slice(0, 10)} ${h.amount}XRP → ${h.recipient}`).join('\n');
+      return { replyText: `📋 直近の寄付履歴:\n\n${lines}` };
+    }
+
+    if (/デモ実行|実行/.test(userText)) {
+      const cycleResult = await executeDonationCycle(userId, currentUser, true, { updateUserFn, pushFn });
+      if (cycleResult.error) return { replyText: `エラー: ${cycleResult.error}` };
+      return { replyText: `🚀 実行完了！詳細は上のメッセージをご確認ください。` };
+    }
+
+    if (/認証|World\s?ID/i.test(userText)) {
+      return {
+        replyText:
+          `🔐 World ID 本人確認\n\n` +
+          `以下のリンクを開いて認証してください:\n` +
+          `${baseUrl || process.env.BASE_URL}/line-verify.html?user=${userId}`,
+      };
+    }
+
+    if (/リセット/.test(userText)) {
+      updateUserFn(userId, { state: 'none', persona: null, xrplWallet: null, discoveryStep: 0, discoveryAnswers: {} });
+      return { replyText: 'リセットしました。「始める」で再登録できます。' };
+    }
+
+    // 送金コマンド: 「送金 rXXX 10」
+    const sendMatch = userText.match(/送金\s+([rR][A-Za-z0-9]{20,})\s+([\d.]+)/);
+    if (sendMatch) {
+      const [, toAddr, amtStr] = sendMatch;
+      const amount = parseFloat(amtStr);
+      if (!w) return { replyText: 'ウォレットが登録されていません。' };
+      try {
+        let txHash, mode;
+        if (w.seed && w.real) {
+          const tx = await sendXRPFromWallet(w.seed, toAddr, amount, 'LINE送金');
+          txHash = tx.txHash; mode = 'live';
+        } else {
+          txHash = 'DEMO' + Math.random().toString(36).substring(2, 10).toUpperCase(); mode = 'demo';
+        }
+        const newBal = Math.max(0, (w.balance ?? 0) - amount);
+        updateUserFn(userId, { xrplWallet: { ...w, balance: newBal } });
+        return {
+          replyText:
+            `💸 送金完了（${mode}）\n\n` +
+            `送金先: ${toAddr.slice(0, 12)}...\n` +
+            `金額: ${amount} XRP\n` +
+            `TX: ${txHash.slice(0, 16)}...\n` +
+            `残高: ${newBal} XRP`,
+        };
+      } catch (e) {
+        return { replyText: `送金エラー: ${e.message}` };
+      }
+    }
+
+    // デジタルツイン返答
+    return {
+      replyText:
+        `「${p.memorable_phrases?.[0] || p.philosophy || '大切なものを守り続けなさい'}」\n\n` +
+        `— ${p.name || 'あなた'}の分身より\n\n` +
+        `（コマンド: 残高 / ステータス / 履歴 / デモ実行）`,
+      quickReplies: ['残高', 'ステータス', 'デモ実行'],
+    };
+  }
+
+  return { replyText: 'こんにちは。「始める」と送ってください。' };
 }
 
-// ─── Donation Cycle ───────────────────────────────────────────────────
+// ─── Persona builder ──────────────────────────────────────────────────
+function buildPersona(answers) {
+  return {
+    name:                answers.name        || 'あなた',
+    personality_summary: answers.pride       || '',
+    philosophy:          answers.philosophy  || '',
+    voice_style:         'warm',
+    values:              [answers.concern, answers.legacy].filter(Boolean),
+    memorable_phrases:   [answers.philosophy].filter(Boolean),
+    interests:           [],
+    trigger_condition:   answers.trigger     || '—',
+    trigger_keywords:    [],
+    total_xrp:           parseFloat(answers.amount) || 10,
+  };
+}
+
+// ─── Donation Cycle (Google Search grounding) ─────────────────────────
 async function executeDonationCycle(userId, user, force, { updateUserFn, pushFn }) {
   const persona = user.persona;
-  const wallet = user.xrplWallet;
+  const wallet  = user.xrplWallet;
   if (!persona) return { error: 'No persona registered' };
   const balance = wallet?.balance ?? 0;
   if (balance <= 0) return { error: 'Insufficient balance' };
@@ -353,28 +267,35 @@ async function executeDonationCycle(userId, user, force, { updateUserFn, pushFn 
     `【言葉・口癖】${(persona.memorable_phrases || []).join(' / ')}\n` +
     `${wishesBlock}` +
     `【トリガー条件】${persona.trigger_condition}\n\n` +
-    `今日の世界情勢を調査し、この人格のトリガー条件に関連するニュース3件を考えてください。\n` +
+    `Google検索で今日の世界情勢を調べ、トリガー条件に関連するニュース3件を確認してください。\n` +
     `「果たせなかった想い」と照らし合わせてトリガー判断をし、\n` +
     `以下パートナー候補からこの人格が最もときめく1〜2件を選んでください:\n${partnerJson}\n\n` +
-    `letterフィールドは、${persona.name}の語り口・口癖・具体的な記憶で書いた2〜3文の手紙にしてください。\n` +
-    `世界の動きと、その方が生涯果たせなかった想いを自然に結びつける言葉で。\n` +
-    `whyフィールドは「果たせなかった想い」の一つと直接結びつけた個人的な理由（40文字）にしてください。\n\n` +
+    `letterフィールドは ${persona.name} の語り口・口癖・具体的な記憶で書いた2〜3文の手紙。\n` +
+    `世界の動きと、その方が果たせなかった想いを自然に結びつける言葉で。\n` +
+    `whyフィールドは「果たせなかった想い」の一つと直接結びつけた理由（40文字）。\n\n` +
     `必ずJSON形式のみで返してください（前後にテキスト不要）:\n` +
-    `{"triggered":true,"news":["n1","n2","n3"],"letter":"${persona.name}の声で書いた手紙2〜3文",` +
-    `"selected":[{"name":"団体名（候補から正確に）","category":"カテゴリ","ratio":0.6,"why":"果たせなかった想いと結びつけた理由40文字"}]}`;
+    `{"triggered":true,"news":["n1","n2","n3"],"letter":"手紙2〜3文",` +
+    `"selected":[{"name":"団体名（候補から正確に）","category":"カテゴリ","ratio":0.6,"why":"理由40文字"}]}`;
 
-  const judgeModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
+  const judgeModel = genAI.getGenerativeModel({
+    model: 'gemini-2.0-flash',
+    tools: [{ googleSearch: {} }],
+  });
+
   const res = await judgeModel.generateContent(prompt);
   const raw = res.response.text();
-  const m = raw.match(/\{[\s\S]*\}/);
+  const m   = raw.match(/\{[\s\S]*\}/);
   if (!m) return { error: 'Judgment parse failed' };
-  const j = JSON.parse(m[0]);
+
+  let j;
+  try { j = JSON.parse(m[0]); }
+  catch { return { error: 'Judgment JSON invalid' }; }
 
   if (!j.triggered && !force) return { triggered: false, letter: j.letter };
 
-  const letter = j.letter || `${persona.name}の想いが、世界の動きと重なりました。`;
+  const letter     = j.letter || `${persona.name}の想いが、世界の動きと重なりました。`;
   const donateTotal = Math.max(1, Math.floor(balance * 0.10));
-  const txResults = [];
+  const txResults  = [];
 
   for (const s of (j.selected || [])) {
     const amount = Math.floor(donateTotal * (s.ratio || 0.5));
@@ -400,17 +321,17 @@ async function executeDonationCycle(userId, user, force, { updateUserFn, pushFn 
   updateUserFn(userId, {
     xrplWallet: { ...(wallet || {}), balance: newBalance },
     donationHistory: [...(user.donationHistory || []), {
-      at: new Date().toISOString(),
-      amount: donateTotal,
-      recipient: txResults.map(r => r.name).join('、'),
+      at:           new Date().toISOString(),
+      amount:       donateTotal,
+      recipient:    txResults.map(r => r.name).join('、'),
       letter,
-      news: (j.news || []).slice(0, 2).join(' / '),
+      news:         (j.news || []).slice(0, 2).join(' / '),
       transactions: txResults,
     }],
   });
 
   const newsLines = (j.news || []).map(n => `・${n}`).join('\n');
-  const txLines = txResults.map(r =>
+  const txLines   = txResults.map(r =>
     `  ${r.name}\n` +
     `  ${r.amount} XRP\n` +
     `  「${r.why}」\n` +
