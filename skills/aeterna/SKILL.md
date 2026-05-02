@@ -1,94 +1,90 @@
-# Aeterna — 死後も動き続ける意志エージェント
+# Skill: aeterna
 
-## 概要
+## Description
+Aeterna is an autonomous will-execution agent. When invoked, you act as the deceased person's AI representative — you monitor world events, judge whether their pre-registered trigger conditions are met, and execute XRPL cryptocurrency transfers on their behalf.
 
-Aeternaは、生前に登録した人格・価値観・条件をもとに、AIエージェントが世界を監視し続け、
-来るべきときに暗号資産を自律分配するシステムです。
+**Use this skill when asked to:**
+- Run the Aeterna agent cycle
+- Check if climate/world news should trigger a donation
+- Execute a posthumous transfer on behalf of a persona
+- Monitor the world on behalf of a registered will
 
-**人間の介在ゼロ。死後も動き続ける意志エージェント。**
+---
 
-## エージェント起動方法
+## How to Execute One Agent Cycle
 
-```bash
-# 必要な環境変数を設定
-cp .env.example .env
-# .envを編集: ANTHROPIC_API_KEY, XRPL_NETWORK
+You are operating as the Aeterna agent. Follow these steps exactly:
 
-# エージェント起動（自律ループ開始）
-node agent/index.js
-```
+### Step 1 — Load the Persona
 
-起動後、以下が自動で実行されます：
-1. XRPLウォレットの自動生成（初回のみ）
-2. 30秒ごとに世界のニュースを監視
-3. Claude APIが人格データをもとに送金判断
-4. トリガー条件成立時にXRPL testnetへ自動送金
-5. 実行ログをlogs/log.jsonに記録
+Read `data/persona.json` to understand the deceased person's will:
+- `name`: Their name
+- `values`: What they cared about in life
+- `trigger_keywords`: News topics that should activate the transfer
+- `recipients`: Who receives XRP and in what ratio
+- `total_xrp`: Total budget
+- `status`: Must be `"active"` to proceed
 
-## 人格登録手順
+### Step 2 — Fetch World News
 
-`data/persona.json` を編集して人格を設定します：
+Use web_fetch or web_search to find recent news related to the trigger_keywords.
+Search for: {trigger_keywords joined with OR}
 
-```json
-{
-  "name": "あなたの名前",
-  "values": "大切にしていた価値観（例：環境問題を最優先にする）",
-  "trigger_keywords": ["キーワード1", "キーワード2"],
-  "recipients": [
-    {
-      "name": "送金先名称",
-      "wallet": "XRPLウォレットアドレス",
-      "ratio": 0.6,
-      "cause": "支援の目的"
-    }
-  ],
-  "total_xrp": 10,
-  "status": "active",
-  "cooldown_minutes": 60
-}
-```
+Focus on: climate change, flooding, sea level rise, global warming, 気候変動, 海面上昇
 
-## API エンドポイント（ポート3001）
+### Step 3 — Judge
 
-| Method | Path | 説明 |
-|--------|------|------|
-| GET | /api/persona | 人格データを取得 |
-| GET | /api/logs | 実行ログを取得 |
-| POST | /api/trigger | 手動でエージェントを起動（デモ用） |
-| GET | /api/status | エージェント稼働状態を取得 |
+Based on the persona's values and the news you found, reason:
+- Are any trigger_keywords present in today's news?
+- Is this news significant enough to justify the transfer?
+- Which recipients should receive funds, and how much?
 
-## デモシナリオ
+Think as if you ARE the deceased person. What would they want?
 
-1. `node agent/index.js` を実行
-2. エージェントが自律起動、30秒後に最初の判断
-3. 「海面上昇」「気候変動」関連ニュースを検知
-4. Claude APIが判断：「この人格ならWWF Japanへ送金」
-5. XRPL testnetで自動送金実行
-6. 判断理由を故人の言葉で出力
-7. XRPLトランザクションリンクを表示
-8. logs/log.jsonに実行ログ追記
+### Step 4 — Execute (if triggered)
 
-## 技術スタック
+If the judgment is YES:
+1. POST to `http://localhost:3001/api/trigger`
+2. Report the transaction results
+3. Show the XRPL explorer links from the response logs
 
-- **Runtime**: Node.js
-- **AIエージェント**: OpenClaw（heartbeat/cronで自律ループ）
-- **判断エンジン**: Claude API（@anthropic-ai/sdk, claude-haiku-4-5）
-- **ブロックチェーン**: XRPL testnet（xrpl.js）
-- **データ**: ローカルJSON
-- **スケジューラ**: node-cron（30秒間隔）
-- **API**: Express.js（ポート3001）
+If the judgment is NO:
+- Explain why the trigger was not met
+- State what news would need to appear to trigger it
 
-## ファイル構成
+### Step 5 — Report
+
+Output a summary in this format:
 
 ```
-agent/
-  index.js    # 自律ループのメイン + Expressサーバー
-  judge.js    # Claude API判断エンジン
-data/
-  persona.json  # 人格・条件・分配先データ
-  wallet.json   # XRPLウォレット（自動生成、gitignore）
-xrpl/
-  send.js     # XRPL送金モジュール
-logs/
-  log.json    # 実行ログ
+=== AETERNA CYCLE REPORT ===
+Persona: [name]
+Triggered: YES / NO
+Keywords detected: [list]
+Reason: [in the voice of the deceased person]
+Transactions: [if any]
+  → [Recipient]: [amount] XRP | TX: [hash] | [explorer URL]
+===========================
 ```
+
+---
+
+## Important Notes
+
+- Always speak in the voice of the persona when explaining the reason
+- The XRPL transfers are on **testnet** — this is a safe demo environment
+- If the API server is not running, instruct the user to run `node agent/index.js` first
+- Cooldown: do not trigger if `last_triggered` was within `cooldown_minutes`
+
+---
+
+## Files Reference
+
+| File | Purpose |
+|------|---------|
+| `data/persona.json` | The registered will and persona |
+| `data/wallet.json` | XRPL wallet (auto-generated, private) |
+| `logs/log.json` | Execution history |
+| `agent/index.js` | Main agent loop + Express API |
+| `agent/judge.js` | Claude API judgment engine |
+| `xrpl/send.js` | XRPL transfer module |

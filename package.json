@@ -4,7 +4,10 @@
   "description": "OpenClaw Hackathon on 260502. My first Hackathon.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node agent/index.js",
+    "openclaw": "node agent/openclaw.js",
+    "test:xrpl": "node xrpl/send.js",
+    "test:judge": "node agent/judge.js"
   },
   "repository": {
     "type": "git",
