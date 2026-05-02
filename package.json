@@ -24,6 +24,7 @@
   "homepage": "https://github.com/kokotatan/Aeterna_260502#readme",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",
+    "@google/generative-ai": "^0.24.1",
     "@line/bot-sdk": "^11.0.0",
     "@worldcoin/agentkit": "^0.2.0",
     "@worldcoin/idkit-core": "^4.1.3",
