@@ -25,10 +25,12 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",
     "@line/bot-sdk": "^11.0.0",
+    "@worldcoin/agentkit": "^0.2.0",
     "@worldcoin/idkit-core": "^4.1.3",
     "axios": "^1.15.2",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "ethers": "^6.16.0",
     "express": "^5.2.1",
     "node-cron": "^4.2.1",
     "xrpl": "^4.6.0"
