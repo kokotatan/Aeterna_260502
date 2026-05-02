@@ -148,6 +148,7 @@ async function processLineEvent(event) {
       updateUserFn: updateUser,
       pushFn: push,
       baseUrl: process.env.BASE_URL || `http://localhost:${PORT}`,
+      loadUsersFn: loadUsers,
     });
     if (result.replyText) await reply(replyToken, result.replyText);
   } catch (err) {
