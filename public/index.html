@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aeterna - シニアの終活特化、意思を残す遺産分配ソフト</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;600&family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="background-container"></div>
+    
+    <main class="container">
+        <header>
+            <h1 class="logo">Aeterna</h1>
+            <p class="subtitle">永遠に続く、あなたの想い</p>
+        </header>
+
+        <section class="card glass">
+            <div class="card-content">
+                <h2>生きた証と、継承の準備を。</h2>
+                <p>
+                    Aeterna（エテルナ）は、シニアのための次世代・遺産分配および意思表示プラットフォームです。
+                    安全で確実な生体認証（World ID）を用いて、あなた自身であることを証明し、大切な人への想いを改ざん不可能な形で残します。
+                </p>
+
+                <div class="verification-section" id="unverified-state">
+                    <div class="status-indicator pending"></div>
+                    <h3>ご本人確認が必要です</h3>
+                    <p class="small-text">ブロックチェーン技術を利用したWorld IDで、安全に本人確認を行います。</p>
+                    
+                    <button id="verify-btn" class="primary-btn">
+                        <span class="btn-icon">👁️</span> World IDで認証する
+                    </button>
+                    <div id="error-msg" class="error-msg"></div>
+                </div>
+
+                <div class="verification-section hidden" id="verified-state">
+                    <div class="status-indicator success"></div>
+                    <h3>認証完了</h3>
+                    <p>本人確認が完了しました。遺産分配の設定を進めてください。</p>
+                    <button class="secondary-btn">遺産分配ダッシュボードへ</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- World ID Integration Script -->
+    <script type="module">
+        // Import IDKit core from CDN (using esm.sh for standard ESM support)
+        // In a production app, we would bundle this, but for vanilla we use CDN
+        import { buildQRData } from 'https://esm.sh/@worldcoin/idkit-core@4.0.0';
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            const verifyBtn = document.getElementById('verify-btn');
+            const unverifiedState = document.getElementById('unverified-state');
+            const verifiedState = document.getElementById('verified-state');
+            const errorMsg = document.getElementById('error-msg');
+
+            verifyBtn.addEventListener('click', async () => {
+                try {
+                    verifyBtn.classList.add('loading');
+                    verifyBtn.textContent = '認証中...';
+                    
+                    // Note: In a vanilla JS app without the React IDKit widget, 
+                    // we would typically use WalletConnect or raw QR codes.
+                    // For demonstration, we simulate the Proof payload here that would
+                    // normally come from the IDKit widget interacting with the World App.
+                    
+                    alert('注意: Vanilla JS環境ではReact用のIDKitウィジェットが使えないため、ここでWorld App(Simulator)との連携フローを実装します（現在はモックとしてサーバーへ検証リクエストを送信します）。');
+                    
+                    // Simulated proof object
+                    const mockProof = {
+                        nullifier_hash: "0x1234567890abcdef...",
+                        merkle_root: "0xabcdef1234567890...",
+                        proof: "0x...",
+                        credential_type: "orb",
+                        action: "register-intent",
+                        verification_level: "orb"
+                    };
+
+                    const response = await fetch('/api/verify', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(mockProof)
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success) {
+                        unverifiedState.classList.add('hidden');
+                        verifiedState.classList.remove('hidden');
+                    } else {
+                        errorMsg.textContent = "認証エラー: " + (data.detail || "不明なエラー");
+                        errorMsg.style.display = "block";
+                    }
+                } catch (e) {
+                    errorMsg.textContent = "ネットワークエラーが発生しました。";
+                    errorMsg.style.display = "block";
+                    console.error(e);
+                } finally {
+                    verifyBtn.classList.remove('loading');
+                    verifyBtn.innerHTML = '<span class="btn-icon">👁️</span> World IDで認証する';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
