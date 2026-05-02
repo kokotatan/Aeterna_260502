@@ -1,4 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
@@ -12,8 +13,32 @@ function loadPersona() {
 }
 
 async function fetchRelevantNews(keywords) {
-  const query = keywords.slice(0, 3).join(' OR ');
+  const query = keywords.slice(0, 4).join(' OR ');
 
+  // Gemini Google Search grounding（最優先）
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.0-flash',
+        tools: [{ googleSearch: {} }],
+      });
+      const searchPrompt =
+        `以下のキーワードに関連する最新ニュースを5件、日本語で箇条書きにしてください。\n` +
+        `キーワード: ${query}\n` +
+        `形式: 「・[見出し]: [概要1〜2文]」`;
+      const result = await model.generateContent(searchPrompt);
+      const text = result.response.text().trim();
+      if (text && text.length > 50) {
+        console.log('[JUDGE] News fetched via Gemini Google Search grounding');
+        return text;
+      }
+    } catch (err) {
+      console.warn('[JUDGE] Gemini search unavailable:', err.message);
+    }
+  }
+
+  // NewsAPI（フォールバック）
   if (process.env.NEWS_API_KEY && process.env.NEWS_API_KEY !== 'your_newsapi_key_here') {
     try {
       const res = await axios.get('https://newsapi.org/v2/everything', {
@@ -28,14 +53,16 @@ async function fetchRelevantNews(keywords) {
       });
       const articles = res.data.articles || [];
       if (articles.length > 0) {
+        console.log('[JUDGE] News fetched via NewsAPI');
         return articles.map(a => `・${a.title}: ${a.description || ''}`).join('\n');
       }
     } catch (err) {
-      console.warn('[JUDGE] NewsAPI unavailable, using simulated news.');
+      console.warn('[JUDGE] NewsAPI unavailable, using demo news.');
     }
   }
 
-  // デモ用シミュレーションニュース（常にトリガーされる）
+  // デモ用フォールバック
+  console.log('[JUDGE] Using demo news (no search API configured)');
   return [
     '・Bangladesh floods: Sea levels rising 3mm per year accelerating coastal erosion',
     '・Climate Summit 2026: Scientists warn global warming on track for 2.8°C by century end',
