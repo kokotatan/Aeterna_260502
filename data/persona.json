@@ -1,0 +1,23 @@
+{
+  "name": "Kotaro",
+  "values": "環境問題を最優先する。教育にも強い関心がある。身内より社会への還元を重視する。",
+  "trigger_keywords": ["海面上昇", "climate", "flood", "気候変動", "climate change", "global warming", "温暖化", "洪水", "drought", "干ばつ"],
+  "recipients": [
+    {
+      "name": "WWF Japan",
+      "wallet": "rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe",
+      "ratio": 0.6,
+      "cause": "環境保護・気候変動対策"
+    },
+    {
+      "name": "奨学金財団",
+      "wallet": "rN7n3473SaZBCG4dFL83w7PB5jCDVN7ka6",
+      "ratio": 0.4,
+      "cause": "教育支援・次世代育成"
+    }
+  ],
+  "total_xrp": 10,
+  "status": "active",
+  "last_triggered": null,
+  "cooldown_minutes": 60
+}
