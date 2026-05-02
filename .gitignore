@@ -148,6 +148,15 @@ dist
 # Claude Code local state
 .claude/
 
+# Agent private key (contains EVM private key)
+.agent-key
+
+# User data (contains LINE user IDs and wallet seeds)
+data/users.json
+
+# Server error logs
+*.err
+
 # Vite files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*

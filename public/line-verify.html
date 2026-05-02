@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aeterna - World ID 本人確認</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;600&family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
+    <style>
+        .verify-card { max-width: 480px; margin: 0 auto; }
+        .step { display: flex; align-items: flex-start; gap: 1rem; margin: 1rem 0; }
+        .step-num { background: var(--accent-gold); color: #000; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; font-size: 0.85rem; }
+        .step-text { color: var(--text-secondary); font-size: 0.95rem; line-height: 1.6; }
+        .user-id-badge { background: rgba(212,175,55,0.15); border: 1px solid rgba(212,175,55,0.4); border-radius: 8px; padding: 0.5rem 1rem; font-family: monospace; font-size: 0.8rem; color: var(--accent-gold); margin: 1rem 0; word-break: break-all; }
+    </style>
+</head>
+<body>
+    <div class="background-container"></div>
+
+    <main class="container verify-card">
+        <header>
+            <h1 class="logo">Aeterna</h1>
+            <p class="subtitle">World ID 本人確認</p>
+        </header>
+
+        <section class="card glass">
+            <div class="card-content">
+
+                <div id="pending-state">
+                    <h2>LINEアカウントの本人確認</h2>
+                    <p>World IDを使って、あなたが本人であることを証明します。確認後、LINEからXRP送金などのAeterna機能が使えるようになります。</p>
+
+                    <div class="step">
+                        <div class="step-num">1</div>
+                        <div class="step-text">下のボタンをタップして、World Appを起動してください</div>
+                    </div>
+                    <div class="step">
+                        <div class="step-num">2</div>
+                        <div class="step-text">QRコードをスキャンして認証を完了させてください</div>
+                    </div>
+                    <div class="step">
+                        <div class="step-num">3</div>
+                        <div class="step-text">LINEに確認完了メッセージが届きます</div>
+                    </div>
+
+                    <div class="verification-section" style="margin-top:1.5rem;">
+                        <div class="status-indicator pending"></div>
+                        <h3>ご本人確認が必要です</h3>
+                        <p class="small-text" id="line-user-display">LINEユーザーID を読み込み中...</p>
+                        <div id="idkit-root"></div>
+                        <div id="error-msg" class="error-msg"></div>
+                    </div>
+                </div>
+
+                <div id="success-state" class="verification-section hidden" style="margin-top:0;">
+                    <div class="status-indicator success"></div>
+                    <h3>認証完了！</h3>
+                    <p>本人確認が完了しました。<br>LINEに完了通知が届きます。</p>
+                    <p class="small-text">このページを閉じてLINEに戻ってください。</p>
+                    <p class="small-text">LINEで「残高」「送金」コマンドが使えるようになりました。</p>
+                </div>
+
+                <div id="error-state" class="verification-section hidden" style="margin-top:0;">
+                    <div class="status-indicator pending"></div>
+                    <h3>エラーが発生しました</h3>
+                    <p id="error-detail" class="small-text"></p>
+                </div>
+
+            </div>
+        </section>
+    </main>
+
+    <script type="module">
+        import React from 'https://esm.sh/react@18';
+        import { createRoot } from 'https://esm.sh/react-dom@18/client';
+        import { IDKitWidget, VerificationLevel } from 'https://esm.sh/@worldcoin/idkit@2';
+
+        const params = new URLSearchParams(window.location.search);
+        const lineUserId = params.get('user');
+
+        if (!lineUserId) {
+            document.getElementById('error-state').classList.remove('hidden');
+            document.getElementById('pending-state').classList.add('hidden');
+            document.getElementById('error-detail').textContent = 'LINEユーザーIDが見つかりません。LINEから再度アクセスしてください。';
+        } else {
+            document.getElementById('line-user-display').textContent = `LINE ID: ${lineUserId}`;
+        }
+
+        const config = await fetch('/api/world-id-config').then(r => r.json());
+
+        async function handleVerification(proof) {
+            const response = await fetch('/api/verify-line', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...proof, line_user_id: lineUserId }),
+            });
+            const data = await response.json();
+            if (!data.success) {
+                throw new Error(data.detail || '認証サーバーエラー');
+            }
+        }
+
+        function onSuccess() {
+            document.getElementById('pending-state').classList.add('hidden');
+            document.getElementById('success-state').classList.remove('hidden');
+        }
+
+        function WorldIDButton() {
+            return React.createElement(
+                IDKitWidget,
+                {
+                    app_id: config.app_id,
+                    action: config.action,
+                    signal: lineUserId || 'anonymous',
+                    verification_level: VerificationLevel.Device,
+                    handleVerification: handleVerification,
+                    onSuccess: onSuccess,
+                    onError: (error) => {
+                        document.getElementById('error-msg').textContent = '認証エラー: ' + (error?.message || String(error));
+                        document.getElementById('error-msg').style.display = 'block';
+                    },
+                },
+                ({ open }) => React.createElement(
+                    'button',
+                    { className: 'primary-btn', onClick: open, style: { marginTop: '1rem' } },
+                    React.createElement('span', { className: 'btn-icon' }, '👁️'),
+                    ' World IDで認証する'
+                )
+            );
+        }
+
+        if (lineUserId) {
+            createRoot(document.getElementById('idkit-root')).render(React.createElement(WorldIDButton));
+        }
+    </script>
+</body>
+</html>

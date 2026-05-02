@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aeterna — 管理ダッシュボード</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;600&family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Outfit', 'Noto Serif JP', sans-serif;
+      background: #0a0a14;
+      color: #e8e4f0;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2rem;
+    }
+
+    h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: 0.05em; }
+    h1 span { color: #a78bfa; }
+
+    .subtitle { font-size: 0.85rem; color: #9ca3af; margin-top: 0.2rem; }
+
+    #refresh-info {
+      font-size: 0.8rem;
+      color: #6b7280;
+    }
+
+    /* Stats row */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .stat-card {
+      background: rgba(167, 139, 250, 0.08);
+      border: 1px solid rgba(167, 139, 250, 0.2);
+      border-radius: 12px;
+      padding: 1.2rem;
+      text-align: center;
+    }
+
+    .stat-card .value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #a78bfa;
+    }
+
+    .stat-card .label {
+      font-size: 0.8rem;
+      color: #9ca3af;
+      margin-top: 0.3rem;
+    }
+
+    /* Soul cards */
+    .souls-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 1.2rem;
+    }
+
+    .soul-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 1.4rem;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .soul-card:hover { border-color: rgba(167, 139, 250, 0.4); }
+
+    .soul-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: var(--accent, #a78bfa);
+    }
+
+    .soul-header {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      margin-bottom: 1rem;
+    }
+
+    .soul-avatar {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(167, 139, 250, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      flex-shrink: 0;
+    }
+
+    .soul-name { font-size: 1.1rem; font-weight: 600; }
+    .soul-id   { font-size: 0.72rem; color: #6b7280; margin-top: 0.1rem; }
+
+    .state-badge {
+      display: inline-block;
+      padding: 0.15rem 0.6rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 500;
+      margin-left: auto;
+    }
+    .state-registered  { background: rgba(52, 211, 153, 0.15); color: #34d399; border: 1px solid rgba(52,211,153,0.3); }
+    .state-discovering { background: rgba(251, 191, 36, 0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
+    .state-review      { background: rgba(96, 165, 250, 0.15); color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
+    .state-none        { background: rgba(107, 114, 128, 0.15); color: #9ca3af; border: 1px solid rgba(107,114,128,0.3); }
+
+    .soul-values {
+      font-size: 0.82rem;
+      color: #c4b5fd;
+      background: rgba(167, 139, 250, 0.07);
+      border-radius: 8px;
+      padding: 0.6rem 0.8rem;
+      margin-bottom: 0.9rem;
+      line-height: 1.5;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .soul-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0.5rem;
+      margin-bottom: 0.9rem;
+    }
+
+    .metric { text-align: center; }
+    .metric .mval { font-size: 1.1rem; font-weight: 700; color: #e8e4f0; }
+    .metric .mlbl { font-size: 0.7rem; color: #6b7280; }
+
+    .soul-history {
+      border-top: 1px solid rgba(255,255,255,0.06);
+      padding-top: 0.8rem;
+    }
+
+    .soul-history h4 {
+      font-size: 0.78rem;
+      color: #6b7280;
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .history-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+      font-size: 0.78rem;
+      color: #9ca3af;
+      padding: 0.3rem 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+
+    .history-item:last-child { border-bottom: none; }
+
+    .history-item .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #a78bfa;
+      flex-shrink: 0;
+      margin-top: 0.35rem;
+    }
+
+    .history-item .amt { color: #34d399; font-weight: 600; white-space: nowrap; }
+    .history-item .reason { flex: 1; line-height: 1.4; }
+    .history-item .time { color: #4b5563; font-size: 0.7rem; white-space: nowrap; }
+
+    .no-history {
+      font-size: 0.78rem;
+      color: #4b5563;
+      text-align: center;
+      padding: 0.4rem;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      color: #4b5563;
+    }
+
+    .empty-state .icon { font-size: 3rem; margin-bottom: 1rem; }
+    .empty-state p { font-size: 0.9rem; }
+
+    #last-updated {
+      text-align: center;
+      color: #374151;
+      font-size: 0.75rem;
+      margin-top: 2rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Aeterna <span>管理ダッシュボード</span></h1>
+    <p class="subtitle">登録済みの魂と寄付実績をリアルタイムで確認</p>
+  </div>
+  <div id="refresh-info">10秒ごとに自動更新</div>
+</header>
+
+<div class="stats" id="stats"></div>
+<div class="souls-grid" id="souls"></div>
+<div id="last-updated"></div>
+
+<script>
+const STATE_LABELS = {
+  registered:     { label: '登録済み',   cls: 'state-registered'  },
+  persona_review: { label: '確認待ち',   cls: 'state-review'      },
+  wallet_pending: { label: '入金待ち',   cls: 'state-review'      },
+  discovering:    { label: '登録中',     cls: 'state-discovering' },
+  none:           { label: '未開始',     cls: 'state-none'        },
+};
+
+const CATEGORY_ICONS = {
+  '気候変動': '🌍', '森林・生態系': '🌿', '貧困・直接支援': '🤝',
+  '医療・紛争': '🏥', '教育・無償学習': '📚', '知識・文化保存': '📖',
+  '海洋保護': '🌊', '難民・人道支援': '🕊️', '女性・教育': '👩',
+  '野生動物保護': '🦁', '不平等・貧困': '⚖️', '教育格差': '🎓',
+};
+
+function fmt(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('ja-JP', { month:'short', day:'numeric' }) + ' ' +
+         d.toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' });
+}
+
+function renderStats(users) {
+  const total       = users.length;
+  const registered  = users.filter(u => u.state === 'registered').length;
+  const totalXRP    = users.reduce((s, u) => s + (u.totalDonated || 0), 0);
+  const totalCycles = users.reduce((s, u) => s + (u.donationCount || 0), 0);
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat-card"><div class="value">${total}</div><div class="label">登録ユーザー数</div></div>
+    <div class="stat-card"><div class="value">${registered}</div><div class="label">遺志登録済み</div></div>
+    <div class="stat-card"><div class="value">${totalXRP.toFixed(1)}</div><div class="label">累計寄付 XRP</div></div>
+    <div class="stat-card"><div class="value">${totalCycles}</div><div class="label">寄付サイクル数</div></div>
+  `;
+}
+
+function renderSouls(users) {
+  const el = document.getElementById('souls');
+  if (users.length === 0) {
+    el.innerHTML = `<div class="empty-state"><div class="icon">👻</div><p>まだ登録されたユーザーがいません。<br>LINEで「始める」と送ってみてください。</p></div>`;
+    return;
+  }
+
+  el.innerHTML = users.map(u => {
+    const stateInfo = STATE_LABELS[u.state] || { label: u.state, cls: 'state-none' };
+    const icon = '✨';
+    const values = u.values || '—';
+    const histItems = (u.history || []).slice(-3).reverse().map(h => `
+      <div class="history-item">
+        <div class="dot"></div>
+        <span class="amt">${h.amount} XRP</span>
+        <span class="reason">${h.recipient}</span>
+        <span class="time">${fmt(h.at)}</span>
+      </div>
+    `).join('');
+
+    return `
+      <div class="soul-card">
+        <div class="soul-header">
+          <div class="soul-avatar">${icon}</div>
+          <div>
+            <div class="soul-name">${u.name || '（名前未設定）'}</div>
+            <div class="soul-id">${u.id.slice(0, 12)}...</div>
+          </div>
+          <span class="state-badge ${stateInfo.cls}">${stateInfo.label}</span>
+          ${u.worldIdVerified ? '<span class="state-badge" style="background:rgba(52,211,153,.1);color:#34d399;border-color:rgba(52,211,153,.3);margin-left:4px">🔐 認証済</span>' : ''}
+        </div>
+
+        <div class="soul-values">${values}</div>
+
+        <div class="soul-metrics">
+          <div class="metric">
+            <div class="mval">${(u.balance || 0).toFixed(1)}</div>
+            <div class="mlbl">残高 XRP</div>
+          </div>
+          <div class="metric">
+            <div class="mval">${(u.totalDonated || 0).toFixed(1)}</div>
+            <div class="mlbl">累計寄付</div>
+          </div>
+          <div class="metric">
+            <div class="mval">${u.donationCount || 0}</div>
+            <div class="mlbl">実行回数</div>
+          </div>
+        </div>
+
+        <div class="soul-history">
+          <h4>寄付履歴</h4>
+          ${histItems || '<div class="no-history">まだ寄付はありません</div>'}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function refresh() {
+  try {
+    const res  = await fetch('/api/users');
+    const data = await res.json();
+    renderStats(data);
+    renderSouls(data);
+    document.getElementById('last-updated').textContent =
+      `最終更新: ${new Date().toLocaleTimeString('ja-JP')}`;
+  } catch (err) {
+    console.error('fetch error:', err);
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

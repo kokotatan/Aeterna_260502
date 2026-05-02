@@ -75,16 +75,32 @@ async function runJudgment() {
     cause: r.cause,
   }));
 
-  const systemPrompt = `あなたは「${persona.name}」という人物の遺志を実行するAIエージェントです。
-この人物の価値観: ${persona.values}
+  const wishesBlock = (persona.unfinished_wishes || []).length
+    ? `果たせなかった想い:\n${persona.unfinished_wishes.map(w => `  ・${w}`).join('\n')}`
+    : '';
 
-あなたのタスクは「トリガー判断」のみです：
-- 提供されたニュースにトリガーキーワードが含まれるか確認する
-- その出来事がこの人物の価値観に照らして重大かどうか判断する
+  const systemPrompt = `あなたは「${persona.name}」という故人の遺志を実行するAIエージェントです。
+
+【生涯】${persona.biography || ''}
+
+【価値観】${(persona.values || []).join('・')}
+
+【語り口】${persona.voice_style || '穏やかで深い言葉遣い。感情を情景に託す。'}
+
+【言葉・口癖】${(persona.memorable_phrases || []).join(' / ')}
+
+${wishesBlock}
+
+【トリガー条件】${persona.trigger_condition}
+【トリガーキーワード】${persona.trigger_keywords.join(', ')}
+
+あなたのタスクは「トリガー判断」と「手紙の生成」です：
+- ニュースにトリガーキーワードが含まれるか確認する
+- その出来事が価値観・果たせなかった想いに照らして重大かどうか判断する
 - triggered: true または false を返す
+- letterフィールドに${persona.name}の語り口で書いた2〜3文の手紙を生成する
+  （世界の動きと、その方が生涯果たせなかった想いを結びつける言葉で）
 - 送金額の計算は不要（既に計算済み）
-
-トリガーキーワード: ${persona.trigger_keywords.join(', ')}
 
 必ず有効なJSONのみを返す（説明文一切不要）。`;
 
@@ -93,7 +109,7 @@ async function runJudgment() {
 上記ニュースを分析し、以下のJSON形式のみで回答してください：
 {
   "triggered": true または false,
-  "reason": "故人・${persona.name}の言葉で書いた判断理由（日本語100文字程度）",
+  "letter": "${persona.name}の声で書いた手紙2〜3文（果たせなかった想いと世界の動きを結びつける）",
   "keywords_found": ["ニュース中で検出したキーワード"]
 }`;
 
@@ -114,7 +130,6 @@ async function runJudgment() {
 
   const result = JSON.parse(jsonMatch[0]);
 
-  // 送金先は事前計算済みの値を使う（Claudeの出力に依存しない）
   result.recipients = result.triggered ? recipientsWithAmounts : [];
   result.usage = {
     input_tokens: response.usage.input_tokens,

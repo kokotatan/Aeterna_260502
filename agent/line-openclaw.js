@@ -198,7 +198,7 @@ async function runLineOpenClaw(userId, userText, currentUser, { updateUserFn, pu
   const ctx = { currentUser, updateUserFn, pushFn, userId };
 
   const model = genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.0-flash-lite',
     tools: GEMINI_TOOLS,
     systemInstruction: system,
   });
@@ -338,29 +338,41 @@ async function executeDonationCycle(userId, user, force, { updateUserFn, pushFn 
     GLOBAL_PARTNERS.map(p => ({ name: p.name, category: p.category, mission: p.mission }))
   );
 
+  const wishesBlock = (persona.unfinished_wishes || []).length
+    ? `【果たせなかった想い】\n${persona.unfinished_wishes.map(w => `  ・${w}`).join('\n')}\n`
+    : '';
+  const bioBlock = persona.biography
+    ? `【生涯】${persona.biography}\n`
+    : `【人格】${persona.personality_summary}\n`;
+
   const prompt =
     `あなたは故人「${persona.name}」の分身AIエージェントです。\n\n` +
-    `【人格】${persona.personality_summary}\n` +
+    `${bioBlock}` +
     `【価値観】${(persona.values || []).join('・')}\n` +
-    `【関心事】${(persona.interests || []).join('・')}\n` +
-    `【口癖】${(persona.memorable_phrases || ['—']).join(' / ')}\n` +
+    `【語り口】${persona.voice_style || '穏やかで深い言葉遣い。感情を情景に託す。'}\n` +
+    `【言葉・口癖】${(persona.memorable_phrases || []).join(' / ')}\n` +
+    `${wishesBlock}` +
     `【トリガー条件】${persona.trigger_condition}\n\n` +
-    `今日の世界情勢を調査し、ニュース3件を作成してください。\n` +
-    `トリガー条件に合致するか判断し、以下パートナー候補から\n` +
-    `あなたの人格が最もときめく1〜2件を選んでください:\n${partnerJson}\n\n` +
-    `必ずJSON形式のみで返してください:\n` +
-    `{"triggered":true,"news":["n1","n2","n3"],"reason":"${persona.name}の言葉で判断理由80文字","` +
-    `selected":[{"name":"団体名","category":"カテゴリ","ratio":0.6,"why":"選んだ理由40文字"}]}`;
+    `今日の世界情勢を調査し、この人格のトリガー条件に関連するニュース3件を考えてください。\n` +
+    `「果たせなかった想い」と照らし合わせてトリガー判断をし、\n` +
+    `以下パートナー候補からこの人格が最もときめく1〜2件を選んでください:\n${partnerJson}\n\n` +
+    `letterフィールドは、${persona.name}の語り口・口癖・具体的な記憶で書いた2〜3文の手紙にしてください。\n` +
+    `世界の動きと、その方が生涯果たせなかった想いを自然に結びつける言葉で。\n` +
+    `whyフィールドは「果たせなかった想い」の一つと直接結びつけた個人的な理由（40文字）にしてください。\n\n` +
+    `必ずJSON形式のみで返してください（前後にテキスト不要）:\n` +
+    `{"triggered":true,"news":["n1","n2","n3"],"letter":"${persona.name}の声で書いた手紙2〜3文",` +
+    `"selected":[{"name":"団体名（候補から正確に）","category":"カテゴリ","ratio":0.6,"why":"果たせなかった想いと結びつけた理由40文字"}]}`;
 
-  const judgeModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const judgeModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
   const res = await judgeModel.generateContent(prompt);
   const raw = res.response.text();
   const m = raw.match(/\{[\s\S]*\}/);
   if (!m) return { error: 'Judgment parse failed' };
   const j = JSON.parse(m[0]);
 
-  if (!j.triggered && !force) return { triggered: false, reason: j.reason };
+  if (!j.triggered && !force) return { triggered: false, letter: j.letter };
 
+  const letter = j.letter || `${persona.name}の想いが、世界の動きと重なりました。`;
   const donateTotal = Math.max(1, Math.floor(balance * 0.10));
   const txResults = [];
 
@@ -374,7 +386,7 @@ async function executeDonationCycle(userId, user, force, { updateUserFn, pushFn 
     let txHash = null;
     if (wallet?.seed && wallet?.real) {
       try {
-        const tx = await sendXRPFromWallet(wallet.seed, partner.wallet, amount, j.reason);
+        const tx = await sendXRPFromWallet(wallet.seed, partner.wallet, amount, letter.slice(0, 100));
         txHash = tx.txHash;
         console.log(`[XRPL] ${amount} XRP → ${partner.name}: ${txHash}`);
       } catch (err) {
@@ -391,7 +403,7 @@ async function executeDonationCycle(userId, user, force, { updateUserFn, pushFn 
       at: new Date().toISOString(),
       amount: donateTotal,
       recipient: txResults.map(r => r.name).join('、'),
-      reason: j.reason,
+      letter,
       news: (j.news || []).slice(0, 2).join(' / '),
       transactions: txResults,
     }],
@@ -399,20 +411,21 @@ async function executeDonationCycle(userId, user, force, { updateUserFn, pushFn 
 
   const newsLines = (j.news || []).map(n => `・${n}`).join('\n');
   const txLines = txResults.map(r =>
-    `🏛 ${r.name}（${r.category}）\n` +
-    `   ${r.amount} XRP — ${r.why}\n` +
-    `   ${r.txHash ? 'TX: ' + r.txHash.slice(0, 14) + '...' : 'TX: デモ実行'}`
+    `  ${r.name}\n` +
+    `  ${r.amount} XRP\n` +
+    `  「${r.why}」\n` +
+    `  ${r.txHash ? r.txHash.slice(0, 16) + '...' : 'デモ実行'}`
   ).join('\n\n');
 
   await pushFn(userId,
-    `✅ ${persona.name}の分身が動きました\n\n` +
-    `📰 世界の動き:\n${newsLines}\n\n` +
-    `💬 「${j.reason}」\n\n` +
-    `💸 実行:\n${txLines}\n\n` +
-    `合計: ${donateTotal} XRP / 残高: ${newBalance} XRP`
+    `✉️ ${persona.name}の想いが届きました\n\n` +
+    `「${letter}」\n\n` +
+    `📰 きっかけ:\n${newsLines}\n\n` +
+    `💸 届け先:\n${txLines}\n\n` +
+    `合計 ${donateTotal} XRP / 残高 ${newBalance} XRP`
   );
 
   return { triggered: true, donated: donateTotal, newBalance, recipients: txResults };
 }
 
-module.exports = { runLineOpenClaw };
+module.exports = { runLineOpenClaw, executeDonationCycle };
