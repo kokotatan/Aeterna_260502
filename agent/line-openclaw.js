@@ -229,6 +229,25 @@ const GEMINI_TOOLS = [{
 
 // ─── Main Entry Point ─────────────────────────────────────────────────
 async function runLineOpenClaw(userId, userText, currentUser, { updateUserFn, pushFn, baseUrl, loadUsersFn }) {
+
+  // ── プリチェック: 登録済みユーザーが「始める」→ 即リセット＆再登録開始 ──
+  const isStart = /^(始める|はじめる|スタート|start|restart)$/i.test(userText.trim());
+  const isRegistered = ['registered', 'persona_review', 'wallet_pending'].includes(currentUser.state);
+  if (isStart && isRegistered && currentUser.type !== 'family') {
+    updateUserFn(userId, {
+      state: 'discovering',
+      discoveryTurns: 0,
+      discoveryHistory: [],
+      discoveryAnswers: {},
+      discoveryStep: 0,
+      persona: null,
+      xrplWallet: null,
+      donationHistory: [],
+      registeredAt: null,
+    });
+    return { replyText: '再登録を始めます。\n\nまず、お名前を教えてください。' };
+  }
+
   const safeUser = JSON.parse(JSON.stringify(currentUser, (k, v) => k === 'seed' ? '[hidden]' : v));
   const system   = buildSystemPrompt(baseUrl || process.env.BASE_URL || 'http://localhost:3000');
   const ctx      = { currentUser, updateUserFn, pushFn, userId, loadUsersFn };
